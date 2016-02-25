@@ -88,6 +88,7 @@
 #endif
 
 #include "sslscan.h"
+#include <mysql.h>
 
 /* Borrowed from tortls.c to dance with OpenSSL on many platforms, with
  * many versions and releases of OpenSSL. */
@@ -207,6 +208,10 @@ ssize_t sendString(int sockfd, const char str[])
     return send(sockfd, str, strlen(str), 0);
 }
 
+#define int3store(T,A)  do { *(T)=  (unsigned char) ((A));\
+                            *(T+1)=(unsigned char) (((unsigned int) (A) >> 8));\
+                            *(T+2)=(unsigned char) (((A) >> 16)); } while (0)
+
 ssize_t sendBuffer(int sockfd, const char *string, size_t length)
 {
   char *buffer;
@@ -214,7 +219,7 @@ ssize_t sendBuffer(int sockfd, const char *string, size_t length)
   ssize_t rc;
 
   bufsize= 4 + length;
-  buffer= (char *)malloc(bufsize);
+  buffer= (char *)calloc(1, bufsize);
   int3store(buffer, length);
   buffer[3]= 1;
   memcpy(buffer + 4, string, length);
@@ -288,22 +293,22 @@ int tcpConnect(struct sslCheckOptions *options)
       unsigned int client_flags= CLIENT_DEFAULT_FLAGS;
       if (!readOrLogAndClose(socketDescriptor, buffer, BUFFERSIZE, options))
             return 0;
-      p= buffer;
-      /* skip length */
-      p+=4;
-      /* protocol */
-      p++;
+      p= buffer; 
+      p+=4; /* length */
+      p++; /* protocol */
+      /* version */
       if (!strncmp(p, "5.5.5-", 6))
           p+= 6;
+      printf("Server version: %s%s\n", COL_GREEN, p);
       p+= strlen(p) + 1;
       p+=4;
       p+=8;
       p++;
       capabilities= (*((unsigned short *) (p)));
-      if (!(capabilities & 2048))
+      if (!(capabilities & CLIENT_SSL))
       {
         close(socketDescriptor);
-        printf("Server doesn't support SSL\n");
+        printf("%s Server doesn't support SSL\n", COL_RED);
         return 0;
       }
       p= buffer;
