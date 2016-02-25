@@ -207,6 +207,22 @@ ssize_t sendString(int sockfd, const char str[])
     return send(sockfd, str, strlen(str), 0);
 }
 
+ssize_t sendBuffer(int sockfd, const char *string, size_t length)
+{
+  char *buffer;
+  size_t bufsize;
+  ssize_t rc;
+
+  bufsize= 4 + length;
+  buffer= (char *)malloc(bufsize);
+  int3store(buffer, length);
+  buffer[3]= 1;
+  memcpy(buffer + 4, string, length);
+  rc= send(sockfd, buffer, bufsize, 0);
+  free(buffer);
+  return rc;
+}
+
 // Create a TCP socket
 int tcpConnect(struct sslCheckOptions *options)
 {
@@ -262,6 +278,46 @@ int tcpConnect(struct sslCheckOptions *options)
         printf_error("%sERROR: Could not open a connection to host %s on port %d.%s\n", COL_RED, options->host, options->port, RESET);
         close(socketDescriptor);
         return 0;
+    }
+
+    /* If we test against a MariaDB server, we need to read/write some unencrypted stuff first */
+    if (options->testMariaDB)
+    {
+      char *p;
+      unsigned short capabilities;
+      unsigned int client_flags= CLIENT_DEFAULT_FLAGS;
+      if (!readOrLogAndClose(socketDescriptor, buffer, BUFFERSIZE, options))
+            return 0;
+      p= buffer;
+      /* skip length */
+      p+=4;
+      /* protocol */
+      p++;
+      if (!strncmp(p, "5.5.5-", 6))
+          p+= 6;
+      p+= strlen(p) + 1;
+      p+=4;
+      p+=8;
+      p++;
+      capabilities= (*((unsigned short *) (p)));
+      if (!(capabilities & 2048))
+      {
+        close(socketDescriptor);
+        printf("Server doesn't support SSL\n");
+        return 0;
+      }
+      p= buffer;
+      client_flags |= CLIENT_SSL;
+      client_flags &= ~CLIENT_COMPRESS;
+      *((long *) (p))= (long) (client_flags);
+      p+= 4;
+      *((long *) (p))= (long) (256 * 256 * 256);
+      p+= 4;
+      *p++= 0x21;
+      memset(p, 0, 23);
+      p+=23;
+      /* send buffer to server to initiate handshake */
+      sendBuffer(socketDescriptor, buffer, p - buffer);
     }
 
     // If STARTTLS is required...
@@ -3145,6 +3201,10 @@ int main(int argc, char *argv[])
         {
             options.showCipherIds = true;
         }
+        else if (strcmp("--mariadb", argv[argLoop]) == 0)
+        {
+            options.testMariaDB = 1;
+        }
 
         // Show client auth trusted CAs
         else if (strcmp("--show-client-cas", argv[argLoop]) == 0)
@@ -3431,6 +3491,7 @@ int main(int argc, char *argv[])
             printf("  %s--show-client-cas%s    Show trusted CAs for TLS client auth\n", COL_GREEN, RESET);
             printf("  %s--show-ciphers%s       Show supported client ciphers\n", COL_GREEN, RESET);
             printf("  %s--show-cipher-ids%s    Show cipher ids\n", COL_GREEN, RESET);
+            printf("  %s--mariadb%s            test against MariaDB server\n", COL_GREEN, RESET);
 #ifndef OPENSSL_NO_SSL2
             printf("  %s--ssl2%s               Only check SSLv2 ciphers\n", COL_GREEN, RESET);
 #endif
