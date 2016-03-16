@@ -96,6 +96,8 @@
  * SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION? */
 static int use_unsafe_renegotiation_op = 0;
 
+static int mariadb_version_shown= 0;
+
 /** Does the run-time openssl version look like we need
  * SSL3_FLAGS_ALLOW_UNSAFE_LEGACY_RENEGOTIATION? */
 static int use_unsafe_renegotiation_flag = 0;
@@ -290,16 +292,24 @@ int tcpConnect(struct sslCheckOptions *options)
     {
       char *p;
       unsigned short capabilities;
+#if defined(CLIENT_DEFAULT_FLAGS) /* MariaDB Connector/C */
       unsigned int client_flags= CLIENT_DEFAULT_FLAGS;
+#else
+      unsigned int client_flags= CLIENT_BASIC_FLAGS;
+#endif
       if (!readOrLogAndClose(socketDescriptor, buffer, BUFFERSIZE, options))
             return 0;
       p= buffer; 
       p+=4; /* length */
       p++; /* protocol */
       /* version */
-      if (!strncmp(p, "5.5.5-", 6))
-          p+= 6;
-      printf("Server version: %s%s\n", COL_GREEN, p);
+      if (!mariadb_version_shown)
+      {
+        if (!strncmp(p, "5.5.5-", 6))
+            p+= 6;
+        printf("Server version: %s%s\n", COL_GREEN, p);
+        mariadb_version_shown= 1;
+      }
       p+= strlen(p) + 1;
       p+=4;
       p+=8;
@@ -321,7 +331,7 @@ int tcpConnect(struct sslCheckOptions *options)
       *p++= 0x21;
       memset(p, 0, 23);
       p+=23;
-      /* send buffer to server to initiate handshake */
+      /* send buffer to server to initiate ssl handshake */
       sendBuffer(socketDescriptor, buffer, p - buffer);
     }
 
